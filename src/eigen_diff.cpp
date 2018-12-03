@@ -1,232 +1,207 @@
+
 #include <Eigen/Dense>
-#include <unsupported/Eigen/AutoDiff>
+#include <eigen_diff/AutoDiffChainJacobian.h>
+#include <eigen_diff/AutoDiffChainHessian.h>
 
 #include <iostream>
 
-// Modified from unsupported/Eigen/src/AutoDiff/AutoDiffJacobian.h
-namespace Eigen
-{
-
-template <typename Functor>
-class AutoDiffChainJacobian : public Functor
-{
-  public:
-    AutoDiffChainJacobian() : Functor() {}
-    AutoDiffChainJacobian(const Functor &f) : Functor(f) {}
-
-    // forward constructors
-#if EIGEN_HAS_VARIADIC_TEMPLATES
-    template <typename... T>
-    AutoDiffChainJacobian(const T &... Values) : Functor(Values...)
-    {
-    }
-#else
-    template <typename T0>
-    AutoDiffChainJacobian(const T0 &a0) : Functor(a0)
-    {
-    }
-    template <typename T0, typename T1>
-    AutoDiffChainJacobian(const T0 &a0, const T1 &a1) : Functor(a0, a1) {}
-    template <typename T0, typename T1, typename T2>
-    AutoDiffChainJacobian(const T0 &a0, const T1 &a1, const T2 &a2) : Functor(a0, a1, a2) {}
-#endif
-
-    typedef typename Functor::InputType InputType;
-    typedef typename Functor::ValueType ValueType;
-    typedef typename Functor::JacobianType JacobianType; // New definition of JacobianType
-    typedef typename ValueType::Scalar Scalar;
-
-    enum
-    {
-        InputsAtCompileTime = InputType::RowsAtCompileTime,
-        ValuesAtCompileTime = ValueType::RowsAtCompileTime,
-        JacobianInputsAtCompileTime = JacobianType::ColsAtCompileTime // Jacobian.cols() no longer have to match Input.rows()
-    };
-
-    typedef Matrix<Scalar, InputsAtCompileTime, JacobianInputsAtCompileTime> InputJacobianType; // Jacobian.cols() matches InputJacobian.cols()
-    typedef typename JacobianType::Index Index;
-
-    typedef Matrix<Scalar, JacobianInputsAtCompileTime, 1> DerivativeType; // Derivative rows() matches InputJacobian.cols()
-    typedef AutoDiffScalar<DerivativeType> ActiveScalar;
-
-    typedef Matrix<ActiveScalar, InputsAtCompileTime, 1> ActiveInput;
-    typedef Matrix<ActiveScalar, ValuesAtCompileTime, 1> ActiveValue;
-
-#if EIGEN_HAS_VARIADIC_TEMPLATES
-    // Some compilers don't accept variadic parameters after a default parameter,
-    // i.e., we can't just write _jac=0 but we need to overload operator():
-    EIGEN_STRONG_INLINE
-    void operator()(const InputType &x, ValueType *v) const
-    {
-        this->operator()(x, v, 0);
-    }
-
-    // Optional parameter InputJacobian (_ijac)
-    template <typename... ParamsType>
-    void operator()(const InputType &x, ValueType *v, JacobianType *_jac, InputJacobianType *_ijac = 0,
-                    const ParamsType &... Params) const
-#else
-    void operator()(const InputType &x, ValueType *v, JacobianType *_jac = 0, InputJacobianType *_ijac = 0) const
-#endif
-    {
-        eigen_assert(v != 0);
-
-        if (!_jac)
-        {
-#if EIGEN_HAS_VARIADIC_TEMPLATES
-            Functor::operator()(x, v, Params...);
-#else
-            Functor::operator()(x, v);
-#endif
-            return;
-        }
-
-        JacobianType &jac = *_jac;
-
-        ActiveInput ax = x.template cast<ActiveScalar>();
-        ActiveValue av(jac.rows());
-
-        if (!_ijac)
-        {
-            eigen_assert(InputsAtCompileTime == JacobianInputsAtCompileTime);
-
-            if (InputsAtCompileTime == Dynamic)
-                for (Index j = 0; j < jac.rows(); j++)
-                    av[j].derivatives().resize(x.rows());
-
-            for (Index i = 0; i < jac.cols(); i++)
-                ax[i].derivatives() = DerivativeType::Unit(x.rows(), i);
-        }
-        else
-        {
-            // If specified, copy derivatives from InputJacobian
-            InputJacobianType &ijac = *_ijac;
-
-            if (InputsAtCompileTime == Dynamic)
-                for (Index j = 0; j < jac.rows(); j++)
-                    av[j].derivatives().resize(ijac.cols());
-
-            for (Index i = 0; i < jac.cols(); i++)
-                ax[i].derivatives() = ijac.row(i);
-        }
-
-#if EIGEN_HAS_VARIADIC_TEMPLATES
-        Functor::operator()(ax, &av, Params...);
-#else
-        Functor::operator()(ax, &av);
-#endif
-
-        for (Index i = 0; i < jac.rows(); i++)
-        {
-            (*v)[i] = av[i].value();
-            jac.row(i) = av[i].derivatives();
-        }
-    }
-};
-
-} // namespace Eigen
-
 // This function combines Function3(Function2(x)).
 // The result will be used for comparison with passing the derivative of Function2 into the AutoDiff.
-template <typename Scalar, int NX = 1, int NY = 1>
+template <typename Scalar>
 struct Function1
 {
-    typedef Eigen::Matrix<Scalar, NX, 1> InputType;    // Rotation angle
-    typedef Eigen::Matrix<Scalar, NY, 1> ValueType;    // Vector dot product
-    typedef Eigen::Matrix<Scalar, NY, 1> JacobianType; // Derivative
+    typedef Eigen::Matrix<Scalar, Eigen::Dynamic, 1> InputType;    // Rotation angle
+    typedef Eigen::Matrix<Scalar, Eigen::Dynamic, 1> ValueType;    // Vector dot product
+    typedef Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic> JacobianType; // Derivative
 
     Function1() {}
 
-    template <typename T1, typename T2>
-    void operator()(const Eigen::Matrix<T1, NX, 1> &x, Eigen::Matrix<T2, NY, 1> *_y) const
+    template <typename T>
+    void operator()(const Eigen::Matrix<T, Eigen::Dynamic, 1> &x, Eigen::Matrix<T, Eigen::Dynamic, 1> *_y) const
     {
-        Eigen::Matrix<T2, NY, 1> &y = *_y;
-        y(0, 0) = (Eigen::AngleAxis<T1>(x(0, 0), Eigen::Vector3d::UnitZ()).toRotationMatrix() * Eigen::Vector3d::UnitX()).dot(Eigen::Vector3d::UnitX());
+        Eigen::Matrix<T, Eigen::Dynamic, 1> &y = *_y;
+        // Always cast known scalar type matrices/vectors into the templated type <T>.
+        // This is required for AutoDiff to work properly.
+        y(0, 0) = (Eigen::AngleAxis<T>(x(0, 0), Eigen::Vector3d::UnitZ().cast<T>()).toRotationMatrix() * Eigen::Vector3d::UnitX().cast<T>()).dot(Eigen::Vector3d::UnitX().cast<T>());
     }
 };
 
 // Function2 rotates a UnitX vector around Z axis.
 // This is a helper function that will provide input for Function3.
-template <typename Scalar, int NX = 1, int NY = 3>
+template <typename Scalar>
 struct Function2
 {
-    typedef Eigen::Matrix<Scalar, NX, 1> InputType;    // Rotation angle
-    typedef Eigen::Matrix<double, NY, 1> ValueType;    // 3D vector
-    typedef Eigen::Matrix<double, NY, 1> JacobianType; // Derivative
+    typedef Eigen::Matrix<Scalar, Eigen::Dynamic, 1> InputType;    // Rotation angle
+    typedef Eigen::Matrix<Scalar, Eigen::Dynamic, 1> ValueType;    // 3D vector
+    typedef Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic> JacobianType; // Derivative
 
     Function2() {}
 
-    template <typename T1, typename T2>
-    void operator()(const Eigen::Matrix<T1, NX, 1> &x, Eigen::Matrix<T2, NY, 1> *_y) const
+    template <typename T>
+    void operator()(const Eigen::Matrix<T, Eigen::Dynamic, 1> &x, Eigen::Matrix<T, Eigen::Dynamic, 1> *_y) const
     {
-        Eigen::Matrix<T2, NY, 1> &y = *_y;
-        y = Eigen::AngleAxis<T1>(x(0, 0), Eigen::Vector3d::UnitZ()).toRotationMatrix() * Eigen::Vector3d::UnitX();
+        Eigen::Matrix<T, Eigen::Dynamic, 1> &y = *_y;
+        y = Eigen::AngleAxis<T>(x(0, 0), Eigen::Vector3d::UnitZ().cast<T>()).toRotationMatrix() * Eigen::Vector3d::UnitX().cast<T>();
     }
 };
 
 // This function computes dot product between the input vector and UnitX.
 // The input vector will be taken from the output of Function2 (including the derivatives).
-template <typename Scalar, int NX = 3, int NY = 1>
+template <typename Scalar>
 struct Function3
 {
-    typedef Eigen::Matrix<Scalar, NX, 1> InputType;    // 3D vector
-    typedef Eigen::Matrix<double, NY, 1> ValueType;    // Dot product
-    typedef Eigen::Matrix<double, NY, 1> JacobianType; // Derivative
+    typedef Eigen::Matrix<Scalar, Eigen::Dynamic, 1> InputType;    // 3D vector
+    typedef Eigen::Matrix<Scalar, Eigen::Dynamic, 1> ValueType;    // Dot product
+    typedef Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic> JacobianType; // Derivative
 
     Function3() {}
 
-    template <typename T1, typename T2>
-    void operator()(const Eigen::Matrix<T1, NX, 1> &x, Eigen::Matrix<T2, NY, 1> *_y) const
+    template <typename T>
+    void operator()(const Eigen::Matrix<T, Eigen::Dynamic, 1> &x, Eigen::Matrix<T, Eigen::Dynamic, 1> *_y) const
     {
-        Eigen::Matrix<T2, NY, 1> &y = *_y;
-        y(0, 0) = Eigen::Vector3d::UnitX().dot(x);
+        Eigen::Matrix<T, Eigen::Dynamic, 1> &y = *_y;
+        y(0, 0) = Eigen::Vector3d::UnitX().cast<T>().dot(x);
     }
 };
 
+typedef double Scalar;
+
+typedef Eigen::AutoDiffChainHessian<Function1<Scalar>>::InputType InputType1;
+typedef Eigen::AutoDiffChainHessian<Function1<Scalar>>::ValueType ValueType1;
+typedef Eigen::AutoDiffChainHessian<Function1<Scalar>>::InputJacobianType InputJacobianType1;
+typedef Eigen::AutoDiffChainHessian<Function1<Scalar>>::JacobianType JacobianType1;
+typedef Eigen::AutoDiffChainHessian<Function1<Scalar>>::InputHessianType InputHessianType1;
+typedef Eigen::AutoDiffChainHessian<Function1<Scalar>>::HessianType HessianType1;
+
+typedef Eigen::AutoDiffChainHessian<Function2<Scalar>>::InputType InputType2;
+typedef Eigen::AutoDiffChainHessian<Function2<Scalar>>::ValueType ValueType2;
+typedef Eigen::AutoDiffChainHessian<Function2<Scalar>>::InputJacobianType InputJacobianType2;
+typedef Eigen::AutoDiffChainHessian<Function2<Scalar>>::JacobianType JacobianType2;
+typedef Eigen::AutoDiffChainHessian<Function2<Scalar>>::InputHessianType InputHessianType2;
+typedef Eigen::AutoDiffChainHessian<Function2<Scalar>>::HessianType HessianType2;
+
+typedef Eigen::AutoDiffChainHessian<Function3<Scalar>>::InputType InputType3;
+typedef Eigen::AutoDiffChainHessian<Function3<Scalar>>::ValueType ValueType3;
+typedef Eigen::AutoDiffChainHessian<Function3<Scalar>>::InputJacobianType InputJacobianType3;
+typedef Eigen::AutoDiffChainHessian<Function3<Scalar>>::JacobianType JacobianType3;
+typedef Eigen::AutoDiffChainHessian<Function3<Scalar>>::InputHessianType InputHessianType3;
+typedef Eigen::AutoDiffChainHessian<Function3<Scalar>>::HessianType HessianType3;
+
+void JacobianFull(const InputType1& x)
+{
+    Function1<Scalar> f;
+    Eigen::AutoDiffChainJacobian<Function1<Scalar>> autoj(f);
+    ValueType1 y(1, 1);
+    JacobianType1 j(1, 1);
+    
+    // Compute full Jacobian
+    autoj(x, &y, &j);
+
+    std::cout << "Real value function...\n";
+    std::cout << "x: " << x.transpose() << "\n";
+    std::cout << "y: " << y.transpose() << "\n";
+    std::cout << "J: " << j << "\n";
+}
+
+void JacobianIntermediate(const InputType2& x, ValueType2& y, JacobianType2& j)
+{
+    Function2<Scalar> f;
+    Eigen::AutoDiffChainJacobian<Function2<Scalar>> autoj(f);
+
+    // Compute 3D vector Jacobian (only used as input into Function3)
+    autoj(x, &y, &j);
+
+    std::cout << "Intermediate function...\n";
+    std::cout << "x: " << x.transpose() << "\n";
+    std::cout << "y: " << y.transpose() << "\n";
+    std::cout << "J: " << j.transpose() << "\n";
+}
+
+void JacobianCompound(const InputType3& x, const InputJacobianType3& ij)
+{
+    Function3<Scalar> f;
+    Eigen::AutoDiffChainJacobian<Function3<Scalar>> autoj(f);
+    ValueType3 y(1, 1);
+    JacobianType3 j(1, 1);
+
+    // Compute the Jacobian of the compound function.
+    autoj(x, &y, &j, &ij);
+
+    std::cout << "Compund function...\n";
+    std::cout << "x: " << x.transpose() << "\n";
+    std::cout << "y: " << y.transpose() << "\n";
+    std::cout << "J: "<< j << "\n";
+}
+
+void HessianFull(const InputType1& x)
+{
+    Function1<Scalar> f;
+    Eigen::AutoDiffChainHessian<Function1<Scalar>> autoj(f);
+    ValueType1 y(1, 1);
+    JacobianType1 j(1, 1);
+    HessianType1 hess;
+    
+    // Compute full Jacobian and Hessian
+    autoj(x, &y, &j, &hess);
+
+    std::cout << "Real value function...\n";
+    std::cout << "x: " << x.transpose() << "\n";
+    std::cout << "y: " << y.transpose() << "\n";
+    std::cout << "J: " << j << "\n";
+    std::cout << "H: " << hess(0) << "\n";
+}
+
+void HessianIntermediate(const InputType2& x, ValueType2& y, JacobianType2& j, HessianType2& hess)
+{
+    Function2<Scalar> f;
+    Eigen::AutoDiffChainHessian<Function2<Scalar>> autoj(f);
+
+    // Compute 3D vector Jacobian and Hessian (only used as input into Function3)
+    autoj(x, &y, &j, &hess);
+
+    std::cout << "Intermediate function...\n";
+    std::cout << "x: " << x.transpose() << "\n";
+    std::cout << "y: " << y.transpose() << "\n";
+    std::cout << "J: " << j.transpose() << "\n";
+    std::cout << "H: " << hess(0) << " " << hess(1) << " " << hess(2) << "\n";
+}
+
+void HessianCompound(const InputType3& x, const InputJacobianType3& ij, const InputHessianType3& ihess)
+{
+    Function3<Scalar> f;
+    Eigen::AutoDiffChainHessian<Function3<Scalar>> autoj(f);
+    ValueType3 y(1, 1);
+    JacobianType3 j(1, 1);
+    HessianType3 hess;
+
+    // Compute the Jacobian and Hessian of the compound function.
+    autoj(x, &y, &j, &hess, &ij, &ihess);
+
+    std::cout << "Compund function...\n";
+    std::cout << "x: " << x.transpose() << "\n";
+    std::cout << "y: " << y.transpose() << "\n";
+    std::cout << "J: "<< j << "\n";
+    std::cout << "H: " << hess(0) << "\n";
+}
+
 int main(int argc, char **argv)
 {
-    typedef double Scalar;
-    // Note that Eigen::AutoDiffChainJacobian<Function3<Scalar>>::InputJacobianType == Function2<Scalar>::JacobianType
-    Eigen::AutoDiffChainJacobian<Function3<Scalar>>::InputJacobianType ij;
-    Function3<Scalar>::InputType x3;
-    Function1<Scalar>::InputType x;
+    InputType1 x(1, 1);
     x(0) = 0.5;
 
-    {
-        // Compute full derivative
-        Function1<Scalar>::ValueType y;
-        Function1<Scalar> f;
-        Eigen::AutoDiffChainJacobian<Function1<Scalar>> autoj(f);
-        Function1<Scalar>::JacobianType j;
-        autoj(x, &y, &j);
-        std::cout << "Real value function...\n";
-        std::cout << "x: " << x.transpose() << "\n";
-        std::cout << "y: " << y.transpose() << "\n";
-        std::cout << "J: " << j << "\n";
-    }
-    {
-        // Compute 3D vector and its derivative
-        Function2<Scalar>::ValueType y;
-        Function2<Scalar> f;
-        Eigen::AutoDiffChainJacobian<Function2<Scalar>> autoj(f);
-        Function2<Scalar>::JacobianType j;
-        autoj(x, &y, &j);
-        // Use the output of this function (including the derivative)
-        // to compute the derivative of the compound function.
-        ij = j;
-        x3 = y;
-    }
-    {
-        // Compute the derivative of the compound function.
-        Function3<Scalar>::ValueType y;
-        Function3<Scalar> f;
-        Eigen::AutoDiffChainJacobian<Function3<Scalar>> autoj(f);
-        Function3<Scalar>::JacobianType j;
-        autoj(x3, &y, &j, &ij); // Pass in the
-        std::cout << "Compund function...\n";
-        std::cout << "x: " << x.transpose() << "\n";
-        std::cout << "y: " << y.transpose() << "\n";
-        std::cout << "J: "<< j.sum() << "\n";
-    }
+    ValueType2 y(3, 1);
+    JacobianType2 j(3, 1);
+    HessianType2 hess;
+
+    std::cout << "\nJacobian example\n";
+    JacobianFull(x);
+    JacobianIntermediate(x, y, j);
+    JacobianCompound(y, j);
+
+    std::cout << "\nHessian example\n";
+    HessianFull(x);
+    HessianIntermediate(x, y, j, hess);
+    HessianCompound(y, j, hess);
+
     return 0;
 }

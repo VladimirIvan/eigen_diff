@@ -21,6 +21,10 @@ add_executable(${PROJECT_NAME} src/eigen_diff.cpp)
 add_dependencies(${PROJECT_NAME} ${catkin_EXPORTED_TARGETS})
 target_link_libraries(${PROJECT_NAME} ${catkin_LIBRARIES})
 
+add_executable(${PROJECT_NAME}_sparse src/eigen_diff_sparse.cpp)
+add_dependencies(${PROJECT_NAME}_sparse ${catkin_EXPORTED_TARGETS})
+target_link_libraries(${PROJECT_NAME}_sparse ${catkin_LIBRARIES})
+
 install(TARGETS ${PROJECT_NAME}
   ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
   LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}

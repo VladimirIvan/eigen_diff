@@ -9,7 +9,8 @@
 #ifndef EIGEN_AUTODIFF_CHAIN_HESSIAN_H
 #define EIGEN_AUTODIFF_CHAIN_HESSIAN_H
 
-#include <unsupported/Eigen/AutoDiff>
+#include <eigen_diff/AutoDiffScalar.h>
+#include <eigen_diff/AutoDiffChainJacobian.h>
 
 namespace Eigen
 {
@@ -123,12 +124,12 @@ class AutoDiffChainHessian : public Functor
                         av[j].derivatives()[k].derivatives().resize(x.rows());
                 }
 
-            for (Index i = 0; i < jac.cols(); i++)
+            for (Index i = 0; i < x.rows(); i++)
             {
                 ax[i].derivatives() = InnerDerivativeType::Unit(x.rows(), i);
+                ax[i].value().derivatives() = InnerDerivativeType::Unit(x.rows(), i);
                 for (Index k = 0; k < x.rows(); k++)
                 {
-                    ax[i].value().derivatives() = InnerDerivativeType::Unit(x.rows(), k);
                     ax[i].derivatives()(k).derivatives() = InnerDerivativeType::Zero(x.rows());
                 }
             }
@@ -150,7 +151,7 @@ class AutoDiffChainHessian : public Functor
                         av[j].derivatives()[k].derivatives().resize(ijac.cols());
                 }
 
-            for (Index i = 0; i < jac.cols(); i++)
+            for (Index i = 0; i < x.rows(); i++)
             {
                 ax[i].derivatives() = ijac.row(i);
                 ax[i].value().derivatives() = ijac.row(i);

@@ -9,7 +9,7 @@
 #ifndef EIGEN_AUTODIFF_CHAIN_JACOBIAN_H
 #define EIGEN_AUTODIFF_CHAIN_JACOBIAN_H
 
-#include <unsupported/Eigen/AutoDiff>
+#include <eigen_diff/AutoDiffScalar.h>
 
 namespace Eigen
 {
@@ -113,7 +113,7 @@ class AutoDiffChainJacobian : public Functor
                 for (Index j = 0; j < jac.rows(); j++)
                     av[j].derivatives().resize(ijac.cols());
 
-            for (Index i = 0; i < jac.cols(); i++)
+            for (Index i = 0; i < x.rows(); i++)
                 ax[i].derivatives() = ijac.row(i);
         }
 

@@ -1,4 +1,3 @@
-
 #include <Eigen/Dense>
 #include <eigen_diff/AutoDiffChainJacobian.h>
 #include <eigen_diff/AutoDiffChainHessian.h>
@@ -20,9 +19,15 @@ struct Function1
     void operator()(const Eigen::Matrix<T, Eigen::Dynamic, 1> &x, Eigen::Matrix<T, Eigen::Dynamic, 1> *_y) const
     {
         Eigen::Matrix<T, Eigen::Dynamic, 1> &y = *_y;
+        Eigen::Matrix<T, Eigen::Dynamic, 1> tmp(y.rows());
         // Always cast known scalar type matrices/vectors into the templated type <T>.
         // This is required for AutoDiff to work properly.
-        y(0, 0) = (Eigen::AngleAxis<T>(x(0, 0), Eigen::Vector3d::UnitZ().cast<T>()).toRotationMatrix() * Eigen::Vector3d::UnitX().cast<T>()).dot(Eigen::Vector3d::UnitX().cast<T>());
+        for(int i=0; i<4; i++)
+        {
+            y(i, 0) = (Eigen::AngleAxis<T>(x(i, 0), Eigen::Vector3d::UnitZ().cast<T>()).toRotationMatrix() * Eigen::Vector3d::UnitX().cast<T>()).dot(Eigen::Vector3d::UnitX().cast<T>());
+            tmp(i, 0) = y(i, 0);
+            if(i>0) y(i, 0) += tmp(i-1, 0);
+        }
     }
 };
 
@@ -41,7 +46,13 @@ struct Function2
     void operator()(const Eigen::Matrix<T, Eigen::Dynamic, 1> &x, Eigen::Matrix<T, Eigen::Dynamic, 1> *_y) const
     {
         Eigen::Matrix<T, Eigen::Dynamic, 1> &y = *_y;
-        y = Eigen::AngleAxis<T>(x(0, 0), Eigen::Vector3d::UnitZ().cast<T>()).toRotationMatrix() * Eigen::Vector3d::UnitX().cast<T>();
+        Eigen::Matrix<T, Eigen::Dynamic, 1> tmp(y.rows());
+        for(int i=0; i<4; i++)
+        {
+            y.block(i*3,0,3,1) = Eigen::AngleAxis<T>(x(i, 0), Eigen::Vector3d::UnitZ().cast<T>()).toRotationMatrix() * Eigen::Vector3d::UnitX().cast<T>();
+            tmp.block(i*3,0,3,1) = y.block(i*3,0,3,1);
+            if(i>0) y.block(i*3,0,3,1) += tmp.block((i-1)*3,0,3,1);
+        }
     }
 };
 
@@ -60,7 +71,13 @@ struct Function3
     void operator()(const Eigen::Matrix<T, Eigen::Dynamic, 1> &x, Eigen::Matrix<T, Eigen::Dynamic, 1> *_y) const
     {
         Eigen::Matrix<T, Eigen::Dynamic, 1> &y = *_y;
-        y(0, 0) = Eigen::Vector3d::UnitX().cast<T>().dot(x);
+        Eigen::Matrix<T, Eigen::Dynamic, 1> tmp(y.rows());
+        for(int i=0; i<4; i++)
+        {
+            y(i, 0) = Eigen::Vector3d::UnitX().cast<T>().dot(x.block(i*3,0,3,1));
+            tmp(i, 0) = y(i, 0);
+            if(i>0) y(i, 0) += tmp(i-1, 0);
+        }
     }
 };
 
@@ -91,8 +108,8 @@ void JacobianFull(const InputType1& x)
 {
     Function1<Scalar> f;
     Eigen::AutoDiffChainJacobian<Function1<Scalar>> autoj(f);
-    ValueType1 y(1, 1);
-    JacobianType1 j(1, 1);
+    ValueType1 y(4, 1);
+    JacobianType1 j(4, 4);
     
     // Compute full Jacobian
     autoj(x, &y, &j);
@@ -100,7 +117,7 @@ void JacobianFull(const InputType1& x)
     std::cout << "Real value function...\n";
     std::cout << "x: " << x.transpose() << "\n";
     std::cout << "y: " << y.transpose() << "\n";
-    std::cout << "J: " << j << "\n";
+    std::cout << "J:\n"<< j << "\n";
 }
 
 void JacobianIntermediate(const InputType2& x, ValueType2& y, JacobianType2& j)
@@ -114,15 +131,15 @@ void JacobianIntermediate(const InputType2& x, ValueType2& y, JacobianType2& j)
     std::cout << "Intermediate function...\n";
     std::cout << "x: " << x.transpose() << "\n";
     std::cout << "y: " << y.transpose() << "\n";
-    std::cout << "J: " << j.transpose() << "\n";
+    std::cout << "J:\n"<< j << "\n";
 }
 
 void JacobianCompound(const InputType3& x, const InputJacobianType3& ij)
 {
     Function3<Scalar> f;
     Eigen::AutoDiffChainJacobian<Function3<Scalar>> autoj(f);
-    ValueType3 y(1, 1);
-    JacobianType3 j(1, 1);
+    ValueType3 y(4, 1);
+    JacobianType3 j(4, 4);
 
     // Compute the Jacobian of the compound function.
     autoj(x, &y, &j, &ij);
@@ -130,15 +147,15 @@ void JacobianCompound(const InputType3& x, const InputJacobianType3& ij)
     std::cout << "Compund function...\n";
     std::cout << "x: " << x.transpose() << "\n";
     std::cout << "y: " << y.transpose() << "\n";
-    std::cout << "J: "<< j << "\n";
+    std::cout << "J:\n"<< j << "\n";
 }
 
 void HessianFull(const InputType1& x)
 {
     Function1<Scalar> f;
     Eigen::AutoDiffChainHessian<Function1<Scalar>> autoj(f);
-    ValueType1 y(1, 1);
-    JacobianType1 j(1, 1);
+    ValueType1 y(4, 1);
+    JacobianType1 j(4, 4);
     HessianType1 hess;
     
     // Compute full Jacobian and Hessian
@@ -147,8 +164,9 @@ void HessianFull(const InputType1& x)
     std::cout << "Real value function...\n";
     std::cout << "x: " << x.transpose() << "\n";
     std::cout << "y: " << y.transpose() << "\n";
-    std::cout << "J: " << j << "\n";
-    std::cout << "H: " << hess(0) << "\n";
+    std::cout << "J:\n"<< j << "\n";
+    std::cout << "H:\n";
+    for(int i=0;i<hess.rows();i++) std::cout << "---------\n" << hess(i) << "\n";
 }
 
 void HessianIntermediate(const InputType2& x, ValueType2& y, JacobianType2& j, HessianType2& hess)
@@ -162,16 +180,17 @@ void HessianIntermediate(const InputType2& x, ValueType2& y, JacobianType2& j, H
     std::cout << "Intermediate function...\n";
     std::cout << "x: " << x.transpose() << "\n";
     std::cout << "y: " << y.transpose() << "\n";
-    std::cout << "J: " << j.transpose() << "\n";
-    std::cout << "H: " << hess(0) << " " << hess(1) << " " << hess(2) << "\n";
+    std::cout << "J:\n"<< j << "\n";
+    std::cout << "H:\n";
+    for(int i=0;i<hess.rows();i++) std::cout << "---------\n" << hess(i) << "\n";
 }
 
 void HessianCompound(const InputType3& x, const InputJacobianType3& ij, const InputHessianType3& ihess)
 {
     Function3<Scalar> f;
     Eigen::AutoDiffChainHessian<Function3<Scalar>> autoj(f);
-    ValueType3 y(1, 1);
-    JacobianType3 j(1, 1);
+    ValueType3 y(4, 1);
+    JacobianType3 j(4, 4);
     HessianType3 hess;
 
     // Compute the Jacobian and Hessian of the compound function.
@@ -180,17 +199,21 @@ void HessianCompound(const InputType3& x, const InputJacobianType3& ij, const In
     std::cout << "Compund function...\n";
     std::cout << "x: " << x.transpose() << "\n";
     std::cout << "y: " << y.transpose() << "\n";
-    std::cout << "J: "<< j << "\n";
-    std::cout << "H: " << hess(0) << "\n";
+    std::cout << "J:\n"<< j << "\n";
+    std::cout << "H:\n";
+    for(int i=0;i<hess.rows();i++) std::cout << "---------\n" << hess(i) << "\n";
 }
 
 int main(int argc, char **argv)
 {
-    InputType1 x(1, 1);
+    InputType1 x(4, 1);
     x(0) = 0.5;
+    x(1) = 0.6;
+    x(2) = 0.7;
+    x(3) = 0.8;
 
-    ValueType2 y(3, 1);
-    JacobianType2 j(3, 1);
+    ValueType2 y(3*4, 1);
+    JacobianType2 j(3*4, 4);
     HessianType2 hess;
 
     std::cout << "\nJacobian example\n";

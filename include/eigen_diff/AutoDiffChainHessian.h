@@ -41,15 +41,16 @@ class AutoDiffChainHessian : public Functor
 
     typedef typename Functor::InputType InputType;
     typedef typename Functor::ValueType ValueType;
-    typedef typename Functor::JacobianType JacobianType; // New definition of JacobianType
     typedef typename ValueType::Scalar Scalar;
 
     enum
     {
         InputsAtCompileTime = InputType::RowsAtCompileTime,
         ValuesAtCompileTime = ValueType::RowsAtCompileTime,
-        JacobianInputsAtCompileTime = JacobianType::ColsAtCompileTime // Jacobian.cols() no longer have to match Input.rows()
+        JacobianInputsAtCompileTime = Functor::JacobianColsAtCompileTime // JacobianInputsAtCompileTime no longer have to match InputsAtCompileTime
     };
+
+    typedef Matrix<Scalar, ValuesAtCompileTime, JacobianInputsAtCompileTime> JacobianType;
 
     typedef Matrix<Scalar, InputsAtCompileTime, JacobianInputsAtCompileTime> InputJacobianType; // Jacobian.cols() matches InputJacobian.cols()
     typedef Array<Matrix<Scalar, JacobianInputsAtCompileTime, JacobianInputsAtCompileTime>, ValuesAtCompileTime, 1> HessianType;
@@ -68,44 +69,81 @@ class AutoDiffChainHessian : public Functor
     // Some compilers don't accept variadic parameters after a default parameter,
     // i.e., we can't just write _jac=0 but we need to overload operator():
     EIGEN_STRONG_INLINE
-    void operator()(const InputType &x, ValueType *v) const
+    void operator()(const InputType &x, ValueType &v) const
     {
-        this->operator()(x, v, 0);
+        this->operator()(x, v);
+    }
+
+    template <typename... ParamsType>
+    void operator()(const InputType &x, ValueType &v, const ParamsType &... Params) const
+    {
+        this->operator()(x, v, Params...);
+    }
+
+    template <typename... ParamsType>
+    void operator()(const InputType &x, ValueType &v, JacobianType &jac, const ParamsType &... Params) const
+    {
+        AutoDiffChainJacobian<Functor> autoj(*static_cast<const Functor *>(this));
+        autoj(x, v, jac, Params...);
+    }
+
+    template <typename... ParamsType>
+    void operator()(const InputType &x, ValueType &v, JacobianType &jac, const InputJacobianType &ijac, 
+        const ParamsType &... Params) const
+    {
+        AutoDiffChainJacobian<Functor> autoj(*static_cast<const Functor *>(this));
+        autoj(x, v, jac, ijac, Params...);
+    }
+
+    template <typename... ParamsType>
+    void operator()(const InputType &x, ValueType &v, JacobianType &jac, HessianType &hess, const ParamsType &... Params) const
+    {
+        this->operator()(x, v, jac, hess, nullptr, nullptr, Params...);
+    }
+
+    template <typename... ParamsType>
+    void operator()(const InputType &x, ValueType &v, JacobianType &jac, HessianType &hess, const InputJacobianType &ijac, const InputHessianType &ihess,
+                    const ParamsType &... Params) const
+    {
+        this->operator()(x, v, jac, hess, &ijac, &ihess, Params...);
     }
 
     // Optional parameter InputJacobian (_ijac)
     template <typename... ParamsType>
-    void operator()(const InputType &x, ValueType *v, JacobianType *_jac, HessianType *_hess, const InputJacobianType *_ijac = 0, const InputHessianType *_ihess = 0,
+    void operator()(const InputType &x, ValueType &v, JacobianType &jac, HessianType &hess, const InputJacobianType *_ijac = 0, const InputHessianType *_ihess = 0,
                     const ParamsType &... Params) const
 #else
-    void operator()(const InputType &x, ValueType *v, JacobianType *_jac = 0, HessianType *_hess, const InputJacobianType *_ijac = 0, const InputHessianType *_ihess = 0) const
+    EIGEN_STRONG_INLINE
+    void operator()(const InputType &x, ValueType &v) const
+    {
+        this->operator()(x, v);
+    }
+
+    void operator()(const InputType &x, ValueType &v, JacobianType &jac) const
+    {
+        AutoDiffChainJacobian<Functor> autoj(*static_cast<const Functor *>(this));
+        autoj(x, v, jac);
+    }
+
+    void operator()(const InputType &x, ValueType &v, JacobianType &jac, const InputJacobianType &ijac) const
+    {
+        AutoDiffChainJacobian<Functor> autoj(*static_cast<const Functor *>(this));
+        autoj(x, v, jac, ijac);
+    }
+
+    void operator()(const InputType &x, ValueType &v, JacobianType &jac, HessianType &hess) const
+    {
+        this->operator()(x, v, jac, hess, nullptr, nullptr);
+    }
+
+    void operator()(const InputType &x, ValueType &v, JacobianType &jac, HessianType &hess, const InputJacobianType &ijac, const InputHessianType &ihess) const
+    {
+        this->operator()(x, v, jac, hess, &ijac, &ihess);
+    }
+
+    void operator()(const InputType &x, ValueType &v, JacobianType &jac = 0, HessianType &hess, const InputJacobianType *_ijac = 0, const InputHessianType *_ihess = 0) const
 #endif
     {
-        eigen_assert(v != 0);
-
-        if (!_jac)
-        {
-#if EIGEN_HAS_VARIADIC_TEMPLATES
-            Functor::operator()(x, v, Params...);
-#else
-            Functor::operator()(x, v);
-#endif
-            return;
-        }
-
-        if (!_hess)
-        {
-            AutoDiffChainJacobian<Functor> autoj(*static_cast<const Functor *>(this));
-#if EIGEN_HAS_VARIADIC_TEMPLATES
-            autoj(x, v, _jac, _ijac, Params...);
-#else
-            autoj(x, v, _jac, _ijac);
-#endif
-            return;
-        }
-
-        JacobianType &jac = *_jac;
-
         ActiveInput ax = x.template cast<OuterActiveScalar>();
         ActiveValue av(jac.rows());
 
@@ -163,12 +201,11 @@ class AutoDiffChainHessian : public Functor
         }
 
 #if EIGEN_HAS_VARIADIC_TEMPLATES
-        Functor::operator()(ax, &av, Params...);
+        Functor::operator()(ax, av, Params...);
 #else
-        Functor::operator()(ax, &av);
+        Functor::operator()(ax, av);
 #endif
 
-        HessianType &hess = *_hess;
         Index cols = _ijac ? _ijac->cols() : x.rows();
         if (JacobianInputsAtCompileTime == Dynamic)
         {
@@ -179,7 +216,7 @@ class AutoDiffChainHessian : public Functor
 
         for (Index i = 0; i < jac.rows(); i++)
         {
-            (*v)[i] = av[i].value().value();
+            v[i] = av[i].value().value();
             jac.row(i) = av[i].value().derivatives();
             for (Index j = 0; j < cols; j++)
                 hess[i].row(j) = av[i].derivatives()[j].derivatives();

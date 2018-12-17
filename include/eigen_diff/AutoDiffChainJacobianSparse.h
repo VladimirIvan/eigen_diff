@@ -40,15 +40,16 @@ class AutoDiffChainJacobianSparse : public Functor
 
     typedef typename Functor::InputType InputType;
     typedef typename Functor::ValueType ValueType;
-    typedef typename Functor::JacobianType JacobianType; // New definition of JacobianType
     typedef typename ValueType::Scalar Scalar;
 
     enum
     {
         InputsAtCompileTime = InputType::RowsAtCompileTime,
         ValuesAtCompileTime = ValueType::RowsAtCompileTime,
-        JacobianInputsAtCompileTime = JacobianType::ColsAtCompileTime // Jacobian.cols() no longer have to match Input.rows()
+        JacobianInputsAtCompileTime = Functor::JacobianColsAtCompileTime // JacobianInputsAtCompileTime no longer have to match InputsAtCompileTime
     };
+
+    typedef SparseMatrix<Scalar> JacobianType;
 
     typedef SparseMatrix<Scalar> InputJacobianType; // Jacobian.cols() matches InputJacobian.cols()
     typedef typename JacobianType::Index Index;
@@ -63,34 +64,55 @@ class AutoDiffChainJacobianSparse : public Functor
 #if EIGEN_HAS_VARIADIC_TEMPLATES
     // Some compilers don't accept variadic parameters after a default parameter,
     // i.e., we can't just write _jac=0 but we need to overload operator():
-    EIGEN_STRONG_INLINE
-    void operator()(const InputType &x, ValueType *v) const
+       EIGEN_STRONG_INLINE
+    void operator()(const InputType &x, ValueType &v) const
     {
-        this->operator()(x, v, 0);
+        this->operator()(x, v);
+    }
+
+    template <typename... ParamsType>
+    void operator()(const InputType &x, ValueType &v, const ParamsType &... Params) const
+    {
+        this->operator()(x, v, Params...);
+    }
+
+    template <typename... ParamsType>
+    void operator()(const InputType &x, ValueType &v, JacobianType &jac, const ParamsType &... Params) const
+    {
+        this->operator()(x, v, jac, nullptr, Params...);
+    }
+
+    template <typename... ParamsType>
+    void operator()(const InputType &x, ValueType &v, JacobianType &jac, const InputJacobianType &ijac, 
+        const ParamsType &... Params) const
+    {
+        this->operator()(x, v, jac, &ijac, Params...);
     }
 
     // Optional parameter InputJacobian (_ijac)
     template <typename... ParamsType>
-    void operator()(const InputType &x, ValueType *v, JacobianType *_jac, const InputJacobianType *_ijac = 0,
+    void operator()(const InputType &x, ValueType &v, JacobianType &jac, const InputJacobianType *_ijac = 0,
                     const ParamsType &... Params) const
 #else
-    void operator()(const InputType &x, ValueType *v, JacobianType *_jac = 0, const InputJacobianType *_ijac = 0) const
+    EIGEN_STRONG_INLINE
+    void operator()(const InputType &x, ValueType &v) const
+    {
+        this->operator()(x, v);
+    }
+
+    void operator()(const InputType &x, ValueType &v, JacobianType &jac) const
+    {
+        this->operator()(x, v, jac, nullptr);
+    }
+
+    void operator()(const InputType &x, ValueType &v, JacobianType &jac, const InputJacobianType &ijac) const
+    {
+        this->operator()(x, v, jac, &ijac);
+    }
+
+    void operator()(const InputType &x, ValueType &v, JacobianType &jac = 0, const InputJacobianType *_ijac = 0) const
 #endif
     {
-        eigen_assert(v != 0);
-
-        if (!_jac)
-        {
-#if EIGEN_HAS_VARIADIC_TEMPLATES
-            Functor::operator()(x, v, Params...);
-#else
-            Functor::operator()(x, v);
-#endif
-            return;
-        }
-
-        JacobianType &jac = *_jac;
-
         ActiveInput ax = x.template cast<ActiveScalar>();
         ActiveValue av(jac.rows());
 
@@ -122,14 +144,14 @@ class AutoDiffChainJacobianSparse : public Functor
         }
 
 #if EIGEN_HAS_VARIADIC_TEMPLATES
-        Functor::operator()(ax, &av, Params...);
+        Functor::operator()(ax, av, Params...);
 #else
-        Functor::operator()(ax, &av);
+        Functor::operator()(ax, av);
 #endif
 
         for (int i = 0; i < jac.rows(); ++i)
         {
-            (*v)[i] = av[i].value();
+            v[i] = av[i].value();
             for (JacobianInnerIteratorType it(av[i].derivatives(), 0); it; ++it)
             {
                 jac.insert(i, it.row()) = av[i].derivatives().coeffRef(it.row());
